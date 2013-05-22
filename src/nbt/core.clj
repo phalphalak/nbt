@@ -20,7 +20,7 @@
                    9 :tag-list
                    10 :compound})
 
-(defn parse-type [stream]
+(defn parse-type [^DataInputStream stream]
   (let [type-byte (.readByte stream)
         type-id (tags type-byte)]
     (if type-id
@@ -28,9 +28,9 @@
       (throw (IllegalArgumentException. (str "Invalid NBT tag '" type-byte "'"))))))
 
 (defn parse-tag
-  ([#^DataInputStream stream]
+  ([^DataInputStream stream]
      (parse-tag stream (parse-type stream)))
-  ([stream tag-id & {:keys [named?] :or {named? true}}]
+  ([^DataInputStream stream tag-id & {:keys [named?] :or {named? true}}]
      (let [name (when (and named? (not= tag-id :end)) (.readUTF stream))
            result (merge {:tag tag-id}
                          (when name {:name name}))]
@@ -43,7 +43,7 @@
                 :long {:value (.readLong stream)}
                 :float {:value (.readFloat stream)}
                 :double {:value (.readDouble stream)}
-                :byte-array (throw (IllegalArgumentException. "Not implemented yet"))
+                :byte-array (throw (IllegalArgumentException. "TODO Not implemented yet"))
                 :string {:value (.readUTF stream)}
                 :tag-list (let [list-type (parse-type stream)
                                 length (.readInt stream)]
@@ -58,7 +58,7 @@
                                           (throw (IllegalArgumentException. "Name collision"))
                                           (recur (assoc acc (tag :name) tag))))))})))))
 
-(defn parse-nbt [stream]
+(defn parse-nbt [^DataInputStream stream]
   (let [type-id (tags (.readByte stream))]
     (if (= :compound type-id)
       (parse-tag stream type-id)
@@ -73,5 +73,5 @@
     (prn (parse-nbt stream)))
   (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/Genesis/data/villages.dat")))]
     (prn (parse-nbt stream)))
-  (with-open [stream (DataInputStream. (FileInputStream. "fixture/Genesis/region/r.0.0.mca"))]
-    (prn (parse-nbt stream))))
+  (comment (with-open [stream (DataInputStream. (FileInputStream. "fixture/Genesis/region/r.0.0.mca"))]
+             (prn (parse-nbt stream)))))
