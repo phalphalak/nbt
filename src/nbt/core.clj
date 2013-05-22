@@ -36,13 +36,14 @@
                          (when name {:name name}))]
        (merge result
               (condp = tag-id
-                :end {}
+                :end nil
                 :byte {:value (.readByte stream)}
                 :short {:value (.readShort stream)}
                 :int {:value (.readInt stream)}
                 :long {:value (.readLong stream)}
                 :float {:value (.readFloat stream)}
                 :double {:value (.readDouble stream)}
+                :byte-array (throw (IllegalArgumentException. "Not implemented yet"))
                 :string {:value (.readUTF stream)}
                 :tag-list (let [list-type (parse-type stream)
                                 length (.readInt stream)]
@@ -68,4 +69,9 @@
   [& args]
   (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/Genesis/level.dat")))]
     (prn (parse-nbt stream)))
-  )
+  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/Genesis/players/phalphalak.dat")))]
+    (prn (parse-nbt stream)))
+  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/Genesis/data/villages.dat")))]
+    (prn (parse-nbt stream)))
+  (with-open [stream (DataInputStream. (FileInputStream. "fixture/Genesis/region/r.0.0.mca"))]
+    (prn (parse-nbt stream))))
