@@ -35,7 +35,7 @@
            result (merge {:tag tag-id}
                          (when name {:name name}))]
        (merge result
-              (condp = tag-id
+              (case tag-id
                 :end nil
                 :byte {:value (.readByte stream)}
                 :short {:value (.readShort stream)}
