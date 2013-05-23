@@ -30,39 +30,37 @@
 (defn parse-tag
   ([^DataInputStream stream]
      (parse-tag stream (parse-type stream)))
-  ([^DataInputStream stream tag-id & {:keys [named?] :or {named? true}}]
-     (let [name (when (and named? (not= tag-id :end)) (.readUTF stream))
-           result (merge {:tag tag-id}
-                         (when name {:name name}))]
-       (merge result
-              (case tag-id
-                :end nil
-                :byte {:value (.readByte stream)}
-                :short {:value (.readShort stream)}
-                :int {:value (.readInt stream)}
-                :long {:value (.readLong stream)}
-                :float {:value (.readFloat stream)}
-                :double {:value (.readDouble stream)}
-                :byte-array (throw (IllegalArgumentException. "TODO Not implemented yet"))
-                :string {:value (.readUTF stream)}
-                :tag-list (let [list-type (parse-type stream)
-                                length (.readInt stream)]
-                            {:list-type list-type
-                             :value (dotimes [i length]
-                                      (parse-tag stream list-type :named? false))})
-                :compound {:value (loop [acc {}]
-                                    (let [tag (parse-tag stream)]
-                                      (if (= (tag :tag) :end)
+  ([^DataInputStream stream tag-type]
+     (merge {:type tag-type}
+            (case tag-type
+              :end nil
+              :byte {:payload (.readByte stream)}
+              :short {:payload (.readShort stream)}
+              :int {:payload (.readInt stream)}
+              :long {:payload (.readLong stream)}
+              :float {:payload (.readFloat stream)}
+              :double {:payload (.readDouble stream)}
+              :byte-array (throw (IllegalArgumentException. "TODO Not implemented yet"))
+              :string {:payload (.readUTF stream)}
+              :tag-list (let [list-type (parse-type stream)
+                              length (.readInt stream)]
+                          {:list-type list-type
+                           :payload (dotimes [i length]
+                                      (parse-tag stream list-type))})
+              :compound {:payload (loop [acc {}]
+                                    (let [type (parse-type stream)]
+                                      (if (= type :end)
                                         acc
-                                        (if (acc (tag :name))
-                                          (throw (IllegalArgumentException. "Name collision"))
-                                          (recur (assoc acc (tag :name) tag))))))})))))
+                                        (let [name (.readUTF stream)
+                                              payload (parse-tag stream type)]
+                                          (if (acc name)
+                                            (throw (IllegalArgumentException. "Name collision"))
+                                            (recur (assoc acc name payload)))))))}))))
 
 (defn parse-nbt [^DataInputStream stream]
-  (let [type-id (tags (.readByte stream))]
-    (if (= :compound type-id)
-      (parse-tag stream type-id)
-      (throw (IllegalArgumentException. "Root NBT tag must be of type compound")))))
+  (if (= :compound (parse-type stream))
+    (merge {:name (.readUTF stream)} (parse-tag stream :compound))
+    (throw (IllegalArgumentException. "Root NBT tag must be of type compound"))))
 
 (defn -main
   "I don't do a whole lot."
