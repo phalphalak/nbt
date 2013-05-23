@@ -20,16 +20,16 @@
                    9 :tag-list
                    10 :compound})
 
-(defn parse-type [^DataInputStream stream]
+(defn read-type [^DataInputStream stream]
   (let [type-byte (.readByte stream)
         type-id (tags type-byte)]
     (if type-id
       type-id
       (throw (IllegalArgumentException. (str "Invalid NBT tag '" type-byte "'"))))))
 
-(defn parse-tag
+(defn read-tag
   ([^DataInputStream stream]
-     (parse-tag stream (parse-type stream)))
+     (read-tag stream (read-type stream)))
   ([^DataInputStream stream tag-type]
      (merge {:type tag-type}
             (case tag-type
@@ -40,36 +40,34 @@
               :long {:payload (.readLong stream)}
               :float {:payload (.readFloat stream)}
               :double {:payload (.readDouble stream)}
-              :byte-array (throw (IllegalArgumentException. "TODO Not implemented yet"))
+              :byte-array {:payload (byte-array (take (.readInt stream) (repeatedly #(.readByte stream))))}
               :string {:payload (.readUTF stream)}
-              :tag-list (let [list-type (parse-type stream)
+              :tag-list (let [list-type (read-type stream)
                               length (.readInt stream)]
                           {:list-type list-type
                            :payload (dotimes [i length]
-                                      (parse-tag stream list-type))})
+                                      (read-tag stream list-type))})
               :compound {:payload (loop [acc {}]
-                                    (let [type (parse-type stream)]
+                                    (let [type (read-type stream)]
                                       (if (= type :end)
                                         acc
                                         (let [name (.readUTF stream)
-                                              payload (parse-tag stream type)]
+                                              payload (read-tag stream type)]
                                           (if (acc name)
                                             (throw (IllegalArgumentException. "Name collision"))
                                             (recur (assoc acc name payload)))))))}))))
 
 (defn parse-nbt [^DataInputStream stream]
-  (if (= :compound (parse-type stream))
-    (merge {:name (.readUTF stream)} (parse-tag stream :compound))
+  (if (= :compound (read-type stream))
+    (merge {:name (.readUTF stream)} (read-tag stream :compound))
     (throw (IllegalArgumentException. "Root NBT tag must be of type compound"))))
 
 (defn -main
   "I don't do a whole lot."
   [& args]
-  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/Genesis/level.dat")))]
+  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/test.nbt")))]
     (prn (parse-nbt stream)))
-  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/Genesis/players/phalphalak.dat")))]
-    (prn (parse-nbt stream)))
-  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/Genesis/data/villages.dat")))]
+  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/bigtest.nbt")))]
     (prn (parse-nbt stream)))
   (comment (with-open [stream (DataInputStream. (FileInputStream. "fixture/Genesis/region/r.0.0.mca"))]
              (prn (parse-nbt stream)))))
