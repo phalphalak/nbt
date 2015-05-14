@@ -1,7 +1,8 @@
 (ns nbt.core
-  (:import (java.io FileInputStream
-                    DataInputStream)
-           (java.util.zip GZIPInputStream)))
+  (:import [java.io
+            FileInputStream
+            DataInputStream]
+           [java.util.zip GZIPInputStream]))
 
 ;; http://www.minecraftwiki.net/wiki/NBT_format
 ;; http://web.archive.org/web/20110723210920/http://www.minecraft.net/docs/NBT.txt
