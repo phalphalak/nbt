@@ -3,6 +3,7 @@
             FileInputStream
             DataInputStream
             ByteArrayInputStream]
+           [java.util Random]
            [java.util.zip GZIPInputStream InflaterInputStream]))
 
 ;; http://www.minecraftwiki.net/wiki/NBT_format
@@ -154,7 +155,16 @@
       (when chunk-desc
         (.skipBytes stream (- (:offset chunk-desc)
                               8192))
-        (decode-chunk stream (:size chunk-desc))))))
+        (assoc chunk-desc
+          :chunk (decode-chunk stream (:size chunk-desc)))))))
+
+(defn slime-chunk? [seed x z]
+  (let [rnd (Random. (bit-xor (+ seed
+                                 (* x x 0x4c1906)
+                                 (* x 0x5ac0db)
+                                 (* z z 0x4307a7)
+                                 (* z 0x5f24f)) 0x3ad8025f))]
+    (= (.nextInt rnd 10) 0)))
 
 (defn -main
   "I don't do a whole lot."
