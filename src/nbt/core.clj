@@ -1,8 +1,9 @@
 (ns nbt.core
   (:import [java.io
             FileInputStream
-            DataInputStream]
-           [java.util.zip GZIPInputStream]))
+            DataInputStream
+            ByteArrayInputStream]
+           [java.util.zip GZIPInputStream InflaterInputStream]))
 
 ;; http://www.minecraftwiki.net/wiki/NBT_format
 ;; http://web.archive.org/web/20110723210920/http://www.minecraft.net/docs/NBT.txt
@@ -19,7 +20,8 @@
                    7 :byte-array
                    8 :string
                    9 :tag-list
-                   10 :compound})
+                   10 :compound
+                   11 :int-array})
 
 (defn read-type [^DataInputStream stream]
   (let [type-byte (.readByte stream)
@@ -41,7 +43,8 @@
               :long {:payload (.readLong stream)}
               :float {:payload (.readFloat stream)}
               :double {:payload (.readDouble stream)}
-              :byte-array {:payload (byte-array (take (.readInt stream) (repeatedly #(.readByte stream))))}
+              :byte-array {:payload (byte-array (take (.readInt stream)
+                                                      (repeatedly #(.readByte stream))))}
               :string {:payload (.readUTF stream)}
               :tag-list (let [list-type (read-type stream)
                               length (.readInt stream)]
@@ -56,19 +59,111 @@
                                               payload (read-tag stream type)]
                                           (if (acc name)
                                             (throw (IllegalArgumentException. "Name collision"))
-                                            (recur (assoc acc name payload)))))))}))))
+                                            (recur (assoc acc name payload)))))))}
+              :int-array {:payload (int-array (take (.readInt stream)
+                                                    (repeatedly #(.readInt stream))))}))))
 
-(defn parse-nbt [^DataInputStream stream]
+(defn decode-nbt [^DataInputStream stream]
   (if (= :compound (read-type stream))
     (merge {:name (.readUTF stream)} (read-tag stream :compound))
     (throw (IllegalArgumentException. "Root NBT tag must be of type compound"))))
 
+(defn ^DataInputStream ->stream [^String file & {:keys [gzip?]}]
+  (cond-> (FileInputStream. file)
+          gzip? (GZIPInputStream.)
+          true (DataInputStream.)))
+
+(defn decode-location [^DataInputStream stream]
+  (let [data (.readInt stream)
+        offset (* 4096 (bit-shift-right data 8))
+        size (* 4096 (bit-and data 0xff))]
+    {:offset offset
+     :size size}))
+
+(defn decode-locations [stream]
+  (doall (filter identity
+                 (repeatedly 1024
+                             #(decode-location stream)))))
+
+(defn decode-timestamp [^DataInputStream stream]
+  (.readInt stream))
+
+(defn decode-timestamps [stream]
+  (doall (filter identity
+                 (repeatedly 1024
+                             #(decode-timestamp stream)))))
+
+(defn decode-header [stream]
+  (->> (map (fn [loc ts [x z]]
+              (assoc loc
+                :timestamp ts
+                :x x
+                :z z))
+            (decode-locations stream)
+            (decode-timestamps stream)
+            (for [z (range 32)
+                  x (range 32)]
+              [x z]))
+      (remove #(and (zero? (:offset %))
+                    (zero? (:size %))))))
+
+(defn decode-chunk [^DataInputStream stream sector-size]
+  (let [length (.readInt stream)
+        compression (case (.readByte stream)
+                      1 :gzip
+                      2 :zlib)
+        compressed-chunk (byte-array length)
+        _ (.read stream compressed-chunk)
+        bais (ByteArrayInputStream. compressed-chunk)
+        decompressing-input-stream (case compression
+                                     :gzip (GZIPInputStream. bais)
+                                     :zlib (InflaterInputStream. bais))
+        nbt (decode-nbt (DataInputStream. decompressing-input-stream))]
+    (.skipBytes stream (- sector-size 5 length))
+    {:length length
+     :compression compression
+     :x nbt}))
+
+(defn load-header [file]
+  (with-open [stream (->stream "saves/New World/region/r.0.0.mca")]
+    (decode-header stream)))
+
+(defn load-region [file]
+  (with-open [stream (->stream file)]
+    (let [header (decode-header stream)
+          chunck-order (sort-by :offset header)]
+      (doall
+       (reduce (fn [acc chunk-desc]
+                 (.skipBytes stream (- (:offset chunk-desc)
+                                       (:offset acc)))
+                 (-> acc
+                     (update-in [:header] conj (assoc chunk-desc
+                                                 :chunk (decode-chunk stream
+                                                                      (:size chunk-desc))))
+                     (assoc :offset (+ (:offset chunk-desc)
+                                       (:size chunk-desc)))))
+               {:header []
+                :offset 8192}
+               (sort-by :offset header))))))
+
+(defn load-chunk [file x z]
+  (with-open [stream (->stream file)]
+    (let [header (decode-header stream)
+          chunk-desc (first (filter #(and (= (:x %) x)
+                                          (= (:z %) z)) header))]
+      (when chunk-desc
+        (.skipBytes stream (- (:offset chunk-desc)
+                              8192))
+        (decode-chunk stream (:size chunk-desc))))))
+
 (defn -main
   "I don't do a whole lot."
   [& args]
-  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/test.nbt")))]
-    (prn (parse-nbt stream)))
-  (with-open [stream (DataInputStream. (GZIPInputStream. (FileInputStream. "fixture/bigtest.nbt")))]
-    (prn (parse-nbt stream)))
-  (comment (with-open [stream (DataInputStream. (FileInputStream. "fixture/Genesis/region/r.0.0.mca"))]
-             (prn (parse-nbt stream)))))
+  (prn (load-header "saves/New World/region/r.0.0.mca"))
+;  (load-region "saves/New World/region/r.0.0.mca")
+  (with-open [stream (->stream "fixture/test.nbt" :gzip? true)]
+    (prn (decode-nbt stream)))
+  (with-open [stream (->stream "fixture/bigtest.nbt" :gzip? true)]
+    (prn (decode-nbt stream)))
+  (comment (with-open [stream (->stream "fixture/Genesis/region/r.0.0.mca")]
+             (prn (decode-nbt stream)))))
