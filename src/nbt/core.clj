@@ -122,7 +122,7 @@
     (.skipBytes stream (- sector-size 5 length))
     {:length length
      :compression compression
-     :x nbt}))
+     :nbt nbt}))
 
 (defn load-header [file]
   (with-open [stream (->stream "saves/New World/region/r.0.0.mca")]
