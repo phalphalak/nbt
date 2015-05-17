@@ -158,6 +158,10 @@
         (assoc chunk-desc
           :chunk (decode-chunk stream (:size chunk-desc)))))))
 
+(defn load-nbt [file zipped?]
+  (with-open [stream (->stream file :gzip? zipped?)]
+    (decode-nbt stream)))
+
 (defn slime-chunk? [seed x z]
   (let [rnd (Random. (bit-xor (+ seed
                                  (* x x 0x4c1906)
@@ -165,6 +169,51 @@
                                  (* z z 0x4307a7)
                                  (* z 0x5f24f)) 0x3ad8025f))]
     (= (.nextInt rnd 10) 0)))
+
+(defn nbt-get [nbt path]
+  (get-in (:payload nbt) (interleave path (repeat :payload))))
+
+(defn biomes [chunk-desc]
+  (-> chunk-desc
+      (get-in [:chunk :nbt])
+      (nbt-get ["Level" "Biomes"])))
+
+(defn height-map [chunk-desc]
+  (-> chunk-desc
+      (get-in [:chunk :nbt])
+      (nbt-get ["Level" "HeightMap"])))
+
+(defn load-level [save-folder]
+  (load-nbt (str save-folder "level.dat") true))
+
+(defn world-time [save-folder]
+  (let [time (-> (load-level "saves/New World/")
+                 (nbt-get ["Data" "DayTime"]))
+        day (int (/ time 24000))
+        hour (int (/ (mod time 24000) 1000))
+        rest (mod time 1000)
+        state (if (< hour 12) :day :night)]
+    {:day day
+     :hour hour
+     :rest rest
+     :state state}))
+
+(defn- proper-quot [v d]
+  ((comp int #(Math/floor %) #(/ % d)) v))
+
+(defn position-info [[x y z]]
+  {:chunk (map #(proper-quot % 16) [x y z])
+   :region (map #(proper-quot % 512) [x y z])})
+
+(defn region-file [save-folder x z]
+  (format "%sregion/r.%s.%s.mca"
+          save-folder
+          x z))
+
+(comment
+  ;; get seed:
+  (-> (load-level "saves/New World/")
+      (nbt-get ["Data" "RandomSeed"])))
 
 (defn -main
   "I don't do a whole lot."
