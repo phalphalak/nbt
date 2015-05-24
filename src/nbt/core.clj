@@ -1,8 +1,11 @@
 (ns nbt.core
+  (:require [clojure.set :refer [map-invert]])
   (:import [java.io
             FileInputStream
             DataInputStream
-            ByteArrayInputStream]
+            DataOutputStream
+            ByteArrayInputStream
+            ByteArrayOutputStream]
            [java.util Random]
            [java.util.zip GZIPInputStream InflaterInputStream]))
 
@@ -11,25 +14,32 @@
 ;; https://github.com/Zeerix/NBT/blob/master/src/main/java/me/zeerix/nbt/NBTStreamReader.java
 ;; https://github.com/twoolie/NBT/blob/master/nbt/nbt.py
 
-(def ^:const tags {0 :end
-                   1 :byte
-                   2 :short
-                   3 :int
-                   4 :long
-                   5 :float
-                   6 :double
-                   7 :byte-array
-                   8 :string
-                   9 :tag-list
-                   10 :compound
-                   11 :int-array})
+(def ^:const tag-id->type
+  {0 :end
+   1 :byte
+   2 :short
+   3 :int
+   4 :long
+   5 :float
+   6 :double
+   7 :byte-array
+   8 :string
+   9 :tag-list
+   10 :compound
+   11 :int-array})
+
+(def ^:const type->tag-id
+  (map-invert tag-id->keyword))
 
 (defn read-type [^DataInputStream stream]
   (let [type-byte (.readByte stream)
-        type-id (tags type-byte)]
+        type-id (tag-id->type type-byte)]
     (if type-id
       type-id
       (throw (IllegalArgumentException. (str "Invalid NBT tag '" type-byte "'"))))))
+
+(defn write-type [type ^DataOutputStream stream]
+  (.writeByte stream (type->tag-id type)))
 
 (defn read-tag
   ([^DataInputStream stream]
@@ -50,8 +60,9 @@
               :tag-list (let [list-type (read-type stream)
                               length (.readInt stream)]
                           {:list-type list-type
-                           :payload (dotimes [i length]
-                                      (read-tag stream list-type))})
+                           :payload (doall
+                                     (take length
+                                           (repeatedly #(read-tag stream list-type))))})
               :compound {:payload (loop [acc {}]
                                     (let [type (read-type stream)]
                                       (if (= type :end)
@@ -65,9 +76,54 @@
                                                     (repeatedly #(.readInt stream))))}))))
 
 (defn decode-nbt [^DataInputStream stream]
-  (if (= :compound (read-type stream))
-    (merge {:name (.readUTF stream)} (read-tag stream :compound))
-    (throw (IllegalArgumentException. "Root NBT tag must be of type compound"))))
+  (let [type (read-type stream)]
+    (if (= :compound type)
+      (merge {:name (.readUTF stream)} (read-tag stream :compound))
+      (throw (IllegalArgumentException. (format "Root NBT tag must be of type compound but was `%s`"
+                                                type))))))
+
+(defn write-tag
+  ([nbt ^DataOutputStream stream]
+   (let [type (:type nbt)]
+     (write-type type stream)
+     (write-tag nbt type stream)))
+  ([nbt type ^DataOutputStream stream]
+   (let [payload (:payload nbt)]
+     (when (contains? nbt :name)
+       (.writeUTF stream (:name nbt)))
+     (case type
+       :byte (.writeByte stream payload)
+       :short (.writeShort stream payload)
+       :int (.writeInt stream payload)
+       :long (.writeLong stream payload)
+       :float (.writeFloat stream payload)
+       :double (.writeDouble stream payload)
+       :byte-array (do
+                     (.writeInt stream (count payload))
+                     (doseq [byte payload]
+                       (.writeByte stream byte)))
+       :int-array (do
+                    (.writeInt stream (count payload))
+                    (doseq [byte payload]
+                      (.writeInt stream byte)))
+       :string (.writeUTF stream payload)
+       :tag-list (do
+                   (write-type (:list-type nbt) stream)
+                   (.writeInt stream (count payload))
+                   (doseq [item payload]
+                     (write-tag item (:list-type nbt) stream)))
+       :compound (do
+                   (doseq [[name tag] payload]
+                     (write-tag (assoc tag
+                                  :name name)
+                                stream))
+                   (write-type :end stream))))))
+
+(defn encode-nbt [nbt ^DataOutputStream stream]
+  (if (= :compound (:type nbt))
+    (write-tag nbt stream)
+    (throw (IllegalArgumentException. (format "Root NBT tag must be of type compound but was `%s`"
+                                              (:type nbt))))))
 
 (defn ^DataInputStream ->stream [^String file & {:keys [gzip?]}]
   (cond-> (FileInputStream. file)
@@ -222,6 +278,17 @@
 ;  (load-region "saves/New World/region/r.0.0.mca")
   (with-open [stream (->stream "fixture/test.nbt" :gzip? true)]
     (prn (decode-nbt stream)))
+
+  (let [nbt (with-open [stream (->stream "fixture/bigtest.nbt" :gzip? true)]
+              (decode-nbt stream))
+        _ (prn nbt)
+        baos (ByteArrayOutputStream.)
+        out (DataOutputStream. baos)
+        _ (encode-nbt nbt out)
+        bytes (.toByteArray baos)
+        nbt' (with-open [stream (DataInputStream. (ByteArrayInputStream. bytes))]
+               (decode-nbt stream))]
+    [nbt nbt'])
   (with-open [stream (->stream "fixture/bigtest.nbt" :gzip? true)]
     (prn (decode-nbt stream)))
   (comment (with-open [stream (->stream "fixture/Genesis/region/r.0.0.mca")]
